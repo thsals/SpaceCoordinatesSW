@@ -6,6 +6,7 @@ int main() {
 	VideoCapture cap(0);
 	Mat img;
 
+
 	while (1) {
 		cap >> img;
 
