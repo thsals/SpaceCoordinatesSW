@@ -1,5 +1,5 @@
-#include<opencv/cv.h>
-#include<opencv/highgui.h>
+#include <opencv/cv.h>
+#include <opencv/highgui.h>
 using namespace cv;
 
 int main()
@@ -16,14 +16,14 @@ int main()
     cap.open(0);
 
     namedWindow("window", CV_WINDOW_AUTOSIZE);
-           
+
     /*루프를 돌면서 프레임 단위로 이미지를 받아들이는 부분.*/
-    while(1)
+    while (1)
     {
         /*VideoCapture로 이미지 프레임 하나를 받아서 image변수로 넘김.*/
-        if(cap.read(image) == NULL)
+        if (cap.read(image) == NULL)
         {
-            cout<<"frame was not read."<<endl;
+            cout << "frame was not read." << endl;
         }
         /*이미지 프레임을 윈도우를 통해서 스크린으로 출력.이 과정이 반복되면서 영상이 출력되게 된다.*/
         imshow("window", image);
