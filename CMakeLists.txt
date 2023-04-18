@@ -11,7 +11,10 @@ include_directories(${OpenCV_INCLUDE_DIR})
 
 set(SOURCE_FILES ./src/main.cpp)
 
-
 add_executable(stereoCam ${SOURCE_FILES})
-
 target_link_libraries(stereoCam ${OpenCV_LIBRARIES})
+
+add_executable( calibration
+	./src/Calibration.cpp
+)
+target_link_libraries(calibration ${OpenCV_LIBRARIES})
