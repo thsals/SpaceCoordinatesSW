@@ -1,298 +1,137 @@
-#include <opencv2/highgui.hpp>
-#include <opencv2/calib3d.hpp>
-#include <opencv2/aruco/charuco.hpp>
-#include <opencv2/imgproc.hpp>
-#include <vector>
+#include <opencv2/opencv.hpp>
+#include <opencv2/calib3d/calib3d.hpp>
+#include <opencv2/highgui/highgui.hpp>
+#include <opencv2/imgproc/imgproc.hpp>
+#include <stdio.h>
 #include <iostream>
-#include <ctime>
 
-using namespace std;
-using namespace cv;
+// Defining the dimensions of checkerboard
+int CHECKERBOARD[2]{6,9}; 
 
-static bool saveCameraParams(const string &filename, Size imageSize, float aspectRatio, int flags,
-		const Mat &cameraMatrix, const Mat &distCoeffs, double totalAvgErr) {
-	FileStorage fs(filename, FileStorage::WRITE);
-	if (!fs.isOpened())
-		return false;
+int main() {
 
-	time_t tt;
-	time(&tt);
-	struct tm *t2 = localtime(&tt);
-	char buf[1024];
-	strftime(buf, sizeof(buf) - 1, "%c", t2);
 
-	fs << "calibration_time" << buf;
+	cv::VideoCapture vc(0);
+	bool bCamRun = true;
 
-	fs << "image_width" << imageSize.width;
-	fs << "image_height" << imageSize.height;
+	cv::Mat imgCap;
+	cv::Mat frame, gray;
+	bool success;
 
-	if (flags & CALIB_FIX_ASPECT_RATIO) fs << "aspectRatio" << aspectRatio;
+	if(!vc.isOpened()) return -1;
 
-	if (flags != 0) {
-		sprintf(buf, "flags: %s%s%s%s",
-				flags & CALIB_USE_INTRINSIC_GUESS ? "+use_intrinsic_guess" : "",
-				flags & CALIB_FIX_ASPECT_RATIO ? "+fix_aspectRatio" : "",
-				flags & CALIB_FIX_PRINCIPAL_POINT ? "+fix_principal_point" : "",
-				flags & CALIB_ZERO_TANGENT_DIST ? "+zero_tangent_dist" : "");
+	// Creating vector to store vectors of 3D points for each checkerboard image
+	std::vector<std::vector<cv::Point3f> > objpoints;
+
+	// Creating vector to store vectors of 2D points for each checkerboard image
+	std::vector<std::vector<cv::Point2f> > imgpoints;
+
+	// vector to store the pixel coordinates of detected checker board corners 
+	std::vector<cv::Point2f> corner_pts;
+
+	// Defining the world coordinates for 3D points
+	std::vector<cv::Point3f> objp;
+	for(int i{0}; i<CHECKERBOARD[1]; i++) {
+		for(int j{0}; j<CHECKERBOARD[0]; j++)
+			objp.push_back(cv::Point3f(j,i,0));
 	}
 
-	fs << "flags" << flags;
 
-	fs << "camera_matrix" << cameraMatrix;
-	fs << "distortion_coefficients" << distCoeffs;
+	while(bCamRun) {
+		vc >> imgCap;
+		if(imgCap.empty()) break;
 
-	fs << "avg_reprojection_error" << totalAvgErr;
+		cv::imshow("origin", imgCap);
+		if(cv::waitKey(1) == 27) break;
 
-	return true;
-}
+		cv::cvtColor(imgCap, gray, cv::COLOR_BGR2GRAY);
+		// Finding checker board corners
+		// If desired number of corners are found in the image then success = true  
+		success = cv::findChessboardCorners(
+				gray, cv::Size(CHECKERBOARD[0], CHECKERBOARD[1]), corner_pts,
+				cv::CALIB_CB_ADAPTIVE_THRESH | cv::CALIB_CB_FAST_CHECK | cv::CALIB_CB_NORMALIZE_IMAGE);
 
-/**
- */
-int main(int argc, char *argv[]) {
+		/* 
+		 * If desired number of corner are detected,
+		 * we refine the pixel coordinates and display 
+		 * them on the images of checker board
+		 */
+		if(success) {
+			cv::TermCriteria criteria(cv::TermCriteria::EPS | cv::TermCriteria::MAX_ITER, 30, 0.001);
 
-	int squaresX = 5;//인쇄한 보드의 가로방향 마커 갯수
-	int squaresY = 8;//인쇄한 보드의 세로방향 마커 갯수
-	float squareLength = 36;//검은색 테두리 포함한 정사각형의 한변 길이, mm단위로 입력
-	float markerLength = 18;//인쇄물에서의 마커 한변의 길이, mm단위로 입력
-	int dictionaryId = 10;//DICT_6X6_250=10
-	string outputFile = "output.txt";
+			// refining pixel coordinates for given 2d points.
+			cv::cornerSubPix(gray,corner_pts,cv::Size(11,11), cv::Size(-1,-1),criteria);
 
-	int calibrationFlags = 0;
-	float aspectRatio = 1;
+			// Displaying the detected corner points on the checker board
+			cv::drawChessboardCorners(frame, cv::Size(CHECKERBOARD[0], CHECKERBOARD[1]), corner_pts, success);
 
-
-	Ptr<aruco::DetectorParameters> detectorParams = aruco::DetectorParameters::create();
-
-	bool refindStrategy =true;
-	int camId = 0;
-
-
-	VideoCapture inputVideo;
-	int waitTime;
-
-	inputVideo.open(camId);
-	waitTime = 10;
-
-
-	Ptr<aruco::Dictionary> dictionary =
-		aruco::getPredefinedDictionary(aruco::PREDEFINED_DICTIONARY_NAME(dictionaryId));
-
-	// create charuco board object
-	Ptr<aruco::CharucoBoard> charucoboard =
-		aruco::CharucoBoard::create(squaresX, squaresY, squareLength, markerLength, dictionary);
-	Ptr<aruco::Board> board = charucoboard.staticCast<aruco::Board>();
-
-	// collect data from each frame
-	vector< vector< vector< Point2f > > > allCorners;
-	vector< vector< int > > allIds;
-	vector< Mat > allImgs;
-	Size imgSize;
-
-	while (inputVideo.grab()) {
-		Mat image, imageCopy;
-		inputVideo.retrieve(image);
-
-		vector< int > ids;
-		vector< vector< Point2f > > corners, rejected;
-
-		// detect markers
-		aruco::detectMarkers(image, dictionary, corners, ids, detectorParams, rejected);
-
-		// refind strategy to detect more markers
-		if (refindStrategy) aruco::refineDetectedMarkers(image, board, corners, ids, rejected);
-
-		// interpolate charuco corners
-		Mat currentCharucoCorners, currentCharucoIds;
-		if (ids.size() > 0)
-			aruco::interpolateCornersCharuco(corners, ids, image, charucoboard, currentCharucoCorners,
-					currentCharucoIds);
-
-		// draw results
-		image.copyTo(imageCopy);
-		if (ids.size() > 0) aruco::drawDetectedMarkers(imageCopy, corners);
-
-		if (currentCharucoCorners.total() > 0)
-			aruco::drawDetectedCornersCharuco(imageCopy, currentCharucoCorners, currentCharucoIds);
-
-		putText(imageCopy, "Press 'c' to add current frame. 'ESC' to finish and calibrate",
-				Point(10, 20), FONT_HERSHEY_SIMPLEX, 0.5, Scalar(255, 0, 0), 2);
-
-		imshow("out", imageCopy);
-		char key = (char)waitKey(waitTime);
-		if (key == 27) break;
-		if (key == 'c' && ids.size() > 0) {
-			cout << "Frame captured" << endl;
-			allCorners.push_back(corners);
-			allIds.push_back(ids);
-			allImgs.push_back(image);
-			imgSize = image.size();
+			objpoints.push_back(objp);
+			imgpoints.push_back(corner_pts);
 		}
 	}
 
-	if (allIds.size() < 1) {
-		cerr << "Not enough captures for calibration" << endl;
-		return 0;
-	}
+	return 0;
 
-	Mat cameraMatrix, distCoeffs;
-	vector< Mat > rvecs, tvecs;
-	double repError;
+	// Extracting path of individual image stored in a given directory
+	std::vector<cv::String> images;
+	// Path of the folder containing checkerboard images
+	std::string path = "./images/*.jpg";
 
-	if (calibrationFlags & CALIB_FIX_ASPECT_RATIO) {
-		cameraMatrix = Mat::eye(3, 3, CV_64F);
-		cameraMatrix.at< double >(0, 0) = aspectRatio;
-	}
+	cv::glob(path, images);
 
-	// prepare data for calibration
-	vector< vector< Point2f > > allCornersConcatenated;
-	vector< int > allIdsConcatenated;
-	vector< int > markerCounterPerFrame;
-	markerCounterPerFrame.reserve(allCorners.size());
-	for (unsigned int i = 0; i < allCorners.size(); i++) {
-		markerCounterPerFrame.push_back((int)allCorners[i].size());
-		for (unsigned int j = 0; j < allCorners[i].size(); j++) {
-			allCornersConcatenated.push_back(allCorners[i][j]);
-			allIdsConcatenated.push_back(allIds[i][j]);
+	//bool success;
+
+	// Looping over all the images in the directory
+	for(int i{0}; i<images.size(); i++)
+	{
+		frame = cv::imread(images[i]);
+		cv::cvtColor(frame,gray,cv::COLOR_BGR2GRAY);
+
+		// Finding checker board corners
+		// If desired number of corners are found in the image then success = true  
+		success = cv::findChessboardCorners(
+				gray, cv::Size(CHECKERBOARD[0], CHECKERBOARD[1]), corner_pts,
+				cv::CALIB_CB_ADAPTIVE_THRESH | cv::CALIB_CB_FAST_CHECK | cv::CALIB_CB_NORMALIZE_IMAGE);
+
+		/* 
+		 * If desired number of corner are detected,
+		 * we refine the pixel coordinates and display 
+		 * them on the images of checker board
+		 */
+		if(success)
+		{
+			cv::TermCriteria criteria(cv::TermCriteria::EPS | cv::TermCriteria::MAX_ITER, 30, 0.001);
+
+			// refining pixel coordinates for given 2d points.
+			cv::cornerSubPix(gray,corner_pts,cv::Size(11,11), cv::Size(-1,-1),criteria);
+
+			// Displaying the detected corner points on the checker board
+			cv::drawChessboardCorners(frame, cv::Size(CHECKERBOARD[0], CHECKERBOARD[1]), corner_pts, success);
+
+			objpoints.push_back(objp);
+			imgpoints.push_back(corner_pts);
 		}
+
+		cv::imshow("Image",frame);
+		cv::waitKey(0);
 	}
 
-	// calibrate camera using aruco markers
-	double arucoRepErr;
-	arucoRepErr = aruco::calibrateCameraAruco(allCornersConcatenated, allIdsConcatenated,
-			markerCounterPerFrame, board, imgSize, cameraMatrix,
-			distCoeffs, noArray(), noArray(), calibrationFlags);
+	cv::destroyAllWindows();
 
-	// prepare data for charuco calibration
-	int nFrames = (int)allCorners.size();
-	vector< Mat > allCharucoCorners;
-	vector< Mat > allCharucoIds;
-	vector< Mat > filteredImages;
-	allCharucoCorners.reserve(nFrames);
-	allCharucoIds.reserve(nFrames);
+	cv::Mat cameraMatrix,distCoeffs,R,T;
 
-	for (int i = 0; i < nFrames; i++) {
-		// interpolate using camera parameters
-		Mat currentCharucoCorners, currentCharucoIds;
-		aruco::interpolateCornersCharuco(allCorners[i], allIds[i], allImgs[i], charucoboard,
-				currentCharucoCorners, currentCharucoIds, cameraMatrix,
-				distCoeffs);
+	/*
+	 * Performing camera calibration by 
+	 * passing the value of known 3D points (objpoints)
+	 * and corresponding pixel coordinates of the 
+	 * detected corners (imgpoints)
+	 */
+	cv::calibrateCamera(objpoints, imgpoints, cv::Size(gray.rows,gray.cols), cameraMatrix, distCoeffs, R, T);
 
-		allCharucoCorners.push_back(currentCharucoCorners);
-		allCharucoIds.push_back(currentCharucoIds);
-		filteredImages.push_back(allImgs[i]);
-	}
-
-	if (allCharucoCorners.size() < 4) {
-		cerr << "Not enough corners for calibration" << endl;
-		return 0;
-	}
-
-	// calibrate camera using charuco
-	repError =
-		aruco::calibrateCameraCharuco(allCharucoCorners, allCharucoIds, charucoboard, imgSize,
-				cameraMatrix, distCoeffs, rvecs, tvecs, calibrationFlags);
-
-	bool saveOk = saveCameraParams(outputFile, imgSize, aspectRatio, calibrationFlags,
-			cameraMatrix, distCoeffs, repError);
-	if (!saveOk) {
-		cerr << "Cannot save output file" << endl;
-		return 0;
-	}
-
-	cout << "Rep Error: " << repError << endl;
-	cout << "Rep Error Aruco: " << arucoRepErr << endl;
-	cout << "Calibration saved to " << outputFile << endl;
-
+	std::cout << "cameraMatrix : " << cameraMatrix << std::endl;
+	std::cout << "distCoeffs : " << distCoeffs << std::endl;
+	std::cout << "Rotation vector : " << R << std::endl;
+	std::cout << "Translation vector : " << T << std::endl;
 
 	return 0;
 }
-
-
-
-//#include <stdio.h>
-//#include <opencv2/opencv.hpp>
-//
-//#include <iostream>
-//
-//// Defining the dimensions of checkerboard
-//int CHECKERBOARD[2]{6,9}; 
-//
-//int main() {
-//	// Creating vector to store vectors of 3D points for each checkerboard image
-//	std::vector<std::vector<cv::Point3f> > objpoints;
-//
-//	// Creating vector to store vectors of 2D points for each checkerboard image
-//	std::vector<std::vector<cv::Point2f> > imgpoints;
-//
-//	// Defining the world coordinates for 3D points
-//	std::vector<cv::Point3f> objp;
-//	for(int i{0}; i<CHECKERBOARD[1]; i++) {
-//		for(int j{0}; j<CHECKERBOARD[0]; j++)
-//			objp.push_back(cv::Point3f(j,i,0));
-//	}
-//
-//
-//	// Extracting path of individual image stored in a given directory
-//	std::vector<cv::String> images;
-//	// Path of the folder containing checkerboard images
-//	std::string path = "./images/*.jpg";
-//
-//	cv::glob(path, images);
-//
-//	cv::Mat frame, gray;
-//	// vector to store the pixel coordinates of detected checker board corners 
-//	std::vector<cv::Point2f> corner_pts;
-//	bool success;
-//
-//	// Looping over all the images in the directory
-//	for(int i{0}; i<images.size(); i++) {
-//		frame = cv::imread(images[i]);
-//		cv::cvtColor(frame,gray,cv::COLOR_BGR2GRAY);
-//
-//		// Finding checker board corners
-//		// If desired number of corners are found in the image then success = true  
-//		success = cv::findChessboardCorners(gray,
-//				cv::Size(CHECKERBOARD[0], CHECKERBOARD[1]), corner_pts,
-//				cv::CALIB_CB_ADAPTIVE_THRESH | cv::CALIB_CB_FAST_CHECK | cv::CALIB_CB_NORMALIZE_IMAGE);
-//
-//		/* 
-//		 * If desired number of corner are detected,
-//		 * we refine the pixel coordinates and display 
-//		 * them on the images of checker board
-//		 */
-//		if(success) {
-//			cv::TermCriteria criteria(cv::TermCriteria::EPS | cv::TermCriteria::MAX_ITERer, 30, 0.001);
-//
-//			// refining pixel coordinates for given 2d points.
-//			cv::cornerSubPix(gray,corner_pts,cv::Size(11,11), cv::Size(-1,-1),criteria);
-//
-//			// Displaying the detected corner points on the checker board
-//			cv::drawChessboardCorners(frame, cv::Size(CHECKERBOARD[0], CHECKERBOARD[1]), corner_pts, success);
-//
-//			objpoints.push_back(objp);
-//			imgpoints.push_back(corner_pts);
-//		}
-//
-//		cv::imshow("Image",frame);
-//		cv::waitKey(0);
-//	}
-//
-//	cv::destroyAllWindows();
-//
-//	cv::Mat cameraMatrix,distCoeffs,R,T;
-//
-//	/*
-//	 * Performing camera calibration by 
-//	 * passing the value of known 3D points (objpoints)
-//	 * and corresponding pixel coordinates of the 
-//	 * detected corners (imgpoints)
-//	 */
-//	cv::calibrateCamera(objpoints, imgpoints, cv::Size(gray.rows,gray.cols), cameraMatrix, distCoeffs, R, T);
-//
-//	std::cout << "cameraMatrix : " << cameraMatrix << std::endl;
-//	std::cout << "distCoeffs : " << distCoeffs << std::endl;
-//	std::cout << "Rotation vector : " << R << std::endl;
-//	std::cout << "Translation vector : " << T << std::endl;
-//
-//	return 0;
-//}
