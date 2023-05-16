@@ -19,12 +19,15 @@ void divideImage(const cv::Mat &imgSrc, cv::Mat &matL, cv::Mat &matR, bool setGr
 }
 
 void findMatching(const cv::Mat &roi, const cv::Mat &origin) {
+
 	int minHessian = 400;
 	cv::Ptr<cv::xfeatures2d::SURF> detector = cv::xfeatures2d::SURF::create( minHessian );
 	std::vector<cv::KeyPoint> keypoints1, keypoints2;
 	cv::Mat descriptors1, descriptors2;
+
 	detector->detectAndCompute( roi, cv::noArray(), keypoints1, descriptors1 );
 	detector->detectAndCompute( origin, cv::noArray(), keypoints2, descriptors2 );
+
 	//-- Step 2: Matching descriptor vectors with a FLANN based matcher
 	// Since SURF is a floating-point descriptor NORM_L2 is used
 	cv::Ptr<cv::DescriptorMatcher> matcher = cv::DescriptorMatcher::create(cv::DescriptorMatcher::FLANNBASED);
@@ -38,10 +41,49 @@ void findMatching(const cv::Mat &roi, const cv::Mat &origin) {
 		}
 	}
 
+
+//	const float inlier_threshold = 2.5f; // Distance threshold to identify inliers with homography check
+//	const float nn_match_ratio = 0.8f;   // Nearest neighbor matching ratio
+//
+//	std::vector<cv::KeyPoint> kpts1, kpts2;
+//	cv::Mat desc1, desc2;
+//
+//	cv::Ptr<cv::AKAZE> detector = cv::AKAZE::create();
+//	cv::BFMatcher matcher(cv::NORM_HAMMING);
+//	std::vector< std::vector<cv::DMatch> > nn_matches;
+//	matcher.knnMatch(desc1, desc2, nn_matches, 2);
+//	std::vector<cv::KeyPoint> matched1, matched2;
+//	for(size_t i = 0; i < nn_matches.size(); i++) {
+//		cv::DMatch first = nn_matches[i][0];
+//		float dist1 = nn_matches[i][0].distance;
+//		float dist2 = nn_matches[i][1].distance;
+//		if(dist1 < nn_match_ratio * dist2) {
+//			matched1.push_back(kpts1[first.queryIdx]);
+//			matched2.push_back(kpts2[first.trainIdx]);
+//		}
+//	}
+//	std::vector<cv::DMatch> good_matches;
+//	std::vector<cv::KeyPoint> inliers1, inliers2;
+//	for(size_t i = 0; i < matched1.size(); i++) {
+//		cv::Mat col = cv::Mat::ones(3, 1, CV_64F);
+//		col.at<double>(0) = matched1[i].pt.x;
+//		col.at<double>(1) = matched1[i].pt.y;
+//		col = homography * col;
+//		col /= col.at<double>(2);
+//		double dist = sqrt( pow(col.at<double>(0) - matched2[i].pt.x, 2) +
+//				pow(col.at<double>(1) - matched2[i].pt.y, 2));
+//		if(dist < inlier_threshold) {
+//			int new_i = static_cast<int>(inliers1.size());
+//			inliers1.push_back(matched1[i]);
+//			inliers2.push_back(matched2[i]);
+//			good_matches.push_back(cv::DMatch(new_i, new_i, 0));
+//		}
+//	}
+
 	//-- Draw matches
 	cv::Mat img_matches;
-	cv::drawMatches( roi, keypoints1, origin, keypoints2, good_matches, img_matches, cv::Scalar::all(-1),
-			cv::Scalar::all(-1), std::vector<char>(), cv::DrawMatchesFlags::NOT_DRAW_SINGLE_POINTS );
+	cv::drawMatches( roi, keypoints1, origin, keypoints2, good_matches, img_matches,
+			cv::Scalar::all(-1), cv::Scalar::all(-1), std::vector<char>(), cv::DrawMatchesFlags::NOT_DRAW_SINGLE_POINTS );
 	//-- Show detected matches
 	cv::imshow("Good Matches", img_matches );
 	cv::waitKey();
